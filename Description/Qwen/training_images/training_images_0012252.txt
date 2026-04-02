@@ -1,0 +1,1 @@
+A Scrabble board with tiles spelling out "YPHENBUTAQ" and various letter scores displayed around it.

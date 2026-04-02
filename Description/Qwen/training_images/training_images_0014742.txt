@@ -1,0 +1,1 @@
+The game of Tic Tac Toe has three X's and two O's, with one empty space left to be filled by an O or another X.

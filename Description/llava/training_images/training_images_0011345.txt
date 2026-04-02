@@ -1,0 +1,1 @@
+A rake is being used to gather leaves.

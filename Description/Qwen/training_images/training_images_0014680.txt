@@ -1,0 +1,1 @@
+The digital thermostat displays 22.5°C and has various buttons for temperature adjustment, fan speed control, clock setting, program selection, timer on/off, and eco mode activation.

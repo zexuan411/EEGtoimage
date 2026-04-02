@@ -1,0 +1,1 @@
+A coaster with a map of the world on it.

@@ -1,0 +1,1 @@
+The thermometer has both Fahrenheit and Celsius scales, with numbers ranging from 0 to 425 degrees on its vertical display.

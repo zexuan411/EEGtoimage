@@ -1,0 +1,1 @@
+The speedometer shows 5548 km on it, with a red needle pointing to zero and white numbers indicating kilometers per hour (km/h).

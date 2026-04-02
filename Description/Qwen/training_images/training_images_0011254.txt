@@ -1,0 +1,1 @@
+The radar screen displays various navigational data and settings, including distance markers, target indicators, and control buttons for adjusting parameters like range and gain.

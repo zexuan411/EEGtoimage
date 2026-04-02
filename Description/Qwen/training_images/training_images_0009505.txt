@@ -1,0 +1,1 @@
+The car's speedometer shows 0 mph, and it has traveled 120 miles since its last reset at 2772 total miles driven.

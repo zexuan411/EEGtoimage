@@ -1,0 +1,1 @@
+A digital thermostat with a temperature of 22.5 degrees Celsius.

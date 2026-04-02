@@ -1,0 +1,1 @@
+A vending machine with a lot of drinks in it.

@@ -1,0 +1,1 @@
+A drawer with a handle.

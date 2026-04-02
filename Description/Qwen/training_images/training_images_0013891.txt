@@ -1,0 +1,1 @@
+The stopwatch shows a time of 0:18:19 and has "FASTime" written on it.

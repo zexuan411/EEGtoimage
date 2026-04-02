@@ -1,0 +1,1 @@
+A Scrabble board with tiles arranged on it, including letters like M, X, V, J, Q, Z, and G.

@@ -1,0 +1,1 @@
+A traffic light with red, yellow, and green lights showing red.

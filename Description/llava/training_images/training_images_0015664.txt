@@ -1,0 +1,1 @@
+A pink vending machine with a display of food items.

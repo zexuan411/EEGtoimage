@@ -1,0 +1,1 @@
+A polygraph machine with a wire connected to it.

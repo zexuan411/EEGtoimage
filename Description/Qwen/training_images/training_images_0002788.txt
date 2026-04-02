@@ -1,0 +1,1 @@
+A knight piece on a checkered board with other pieces around it.

@@ -1,0 +1,1 @@
+The Scrabble board displays various words, including "WELCOME," "OVERDRIVE," and "LEAN."

@@ -1,0 +1,1 @@
+A collection of traffic signs, including speed limit 55 and stop sign.

@@ -1,0 +1,1 @@
+A checker board with brown and black checkers.

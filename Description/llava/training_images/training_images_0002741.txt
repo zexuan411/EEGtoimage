@@ -1,0 +1,1 @@
+A checkerboard with black and red pieces.

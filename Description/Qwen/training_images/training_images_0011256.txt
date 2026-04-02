@@ -1,0 +1,1 @@
+The radar screen displays concentric circles with some highlighted areas and text instructions on the right side.

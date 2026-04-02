@@ -1,0 +1,1 @@
+A bin with a yellow tag.

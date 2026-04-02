@@ -1,0 +1,1 @@
+A map of a country is displayed on a table.

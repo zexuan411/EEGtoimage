@@ -1,0 +1,1 @@
+The thermostat displays 12:02 am, heat on at 74 degrees Fahrenheit with hold and run options available.

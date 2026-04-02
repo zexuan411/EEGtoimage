@@ -1,0 +1,1 @@
+A bank ATM with an advertisement on its screen and options to insert checks or cash, along with a card reader slot below it.

@@ -1,0 +1,1 @@
+A rusty rock with a pattern of rust.

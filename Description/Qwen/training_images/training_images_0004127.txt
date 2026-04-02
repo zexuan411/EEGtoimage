@@ -1,0 +1,1 @@
+The car's dashboard displays an "Access Key Not Detected" message, along with speedometer and tachometer readings.

@@ -1,0 +1,1 @@
+A digital scale with a 0.00 reading.

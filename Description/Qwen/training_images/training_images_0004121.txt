@@ -1,0 +1,1 @@
+The speedometer reads 0 km/h, and the trip meter shows 2346 kilometers with an average fuel consumption of 5.9 liters per hundred kilometers at 13:49 on a day when it's 32°C outside.

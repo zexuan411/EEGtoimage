@@ -1,0 +1,1 @@
+A gyroscope with a green and yellow wheel.

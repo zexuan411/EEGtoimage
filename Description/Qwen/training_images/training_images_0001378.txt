@@ -1,0 +1,1 @@
+A colorful, grid-based game with numbers and illustrations on both sides of an open book-like object.

@@ -1,0 +1,1 @@
+The ATM has buttons for entering amounts and options like "Geld / Cash" displayed on its screen, indicating it's ready to dispense money or perform transactions with cards.

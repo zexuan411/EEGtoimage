@@ -1,0 +1,1 @@
+A log with a number on it.

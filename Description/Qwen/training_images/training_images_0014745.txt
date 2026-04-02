@@ -1,0 +1,1 @@
+The Tic Tac Toe board has three X's and two O's, with an empty space left to complete the game.

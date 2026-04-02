@@ -1,0 +1,1 @@
+A Scrabble board with tiles arranged on it, showing letters like "T," "L," and "E."

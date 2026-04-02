@@ -1,0 +1,1 @@
+A net with a pattern of hexagons.

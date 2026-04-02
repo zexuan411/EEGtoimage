@@ -1,0 +1,1 @@
+The dartboard has black, red, and green sections with white numbers around its circumference.

@@ -1,0 +1,1 @@
+A red sweeper with a red handle.

@@ -1,0 +1,1 @@
+A Debit ATM machine with a screen, keypad, and card slot.

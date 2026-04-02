@@ -1,0 +1,1 @@
+A backgammon board with a blue die and a white die.

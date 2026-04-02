@@ -1,0 +1,1 @@
+A cash machine with a screen.

@@ -1,0 +1,1 @@
+A bean on a table.

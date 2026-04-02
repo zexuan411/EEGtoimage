@@ -1,0 +1,1 @@
+A dart with a blue, white and red design.

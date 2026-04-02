@@ -1,0 +1,1 @@
+A wooden tic-tac-toe game with three Xs and two Os on it, placed inside or next to a cloth bag.

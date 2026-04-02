@@ -1,0 +1,1 @@
+A checkerboard with alternating green and white squares, featuring red and white pieces arranged on it.

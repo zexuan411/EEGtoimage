@@ -1,0 +1,1 @@
+A Scrabble board with tiles arranged to spell out various words, including "Mafia," "Devo," and "Buon."

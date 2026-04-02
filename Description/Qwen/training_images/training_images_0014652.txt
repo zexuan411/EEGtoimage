@@ -1,0 +1,1 @@
+The thermometer displays temperatures in both Celsius and Fahrenheit, with the current temperature at 70 degrees F (21 degrees C).

@@ -1,0 +1,1 @@
+A thermostat with a digital display showing the temperature of 74 degrees.

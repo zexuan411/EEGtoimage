@@ -1,0 +1,1 @@
+The speedometer has markings for speeds up to 140 miles per hour and shows zero mph currently.

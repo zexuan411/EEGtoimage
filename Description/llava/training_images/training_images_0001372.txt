@@ -1,0 +1,1 @@
+A game board with a lot of different colored pieces.

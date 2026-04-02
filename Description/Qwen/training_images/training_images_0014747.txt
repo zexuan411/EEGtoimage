@@ -1,0 +1,1 @@
+The Tic Tac Toe game has three rows and columns, with X's on top left, middle right, bottom center, and bottom left squares; O's on middle left, bottom right, and top right squares.

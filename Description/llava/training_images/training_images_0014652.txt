@@ -1,0 +1,1 @@
+A thermometer with the temperature of 30 degrees Celsius.

@@ -1,0 +1,1 @@
+The digital thermostat displays 22.5°C and has buttons for auto, fan speed control, and temperature adjustment.

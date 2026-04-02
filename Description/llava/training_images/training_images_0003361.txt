@@ -1,0 +1,1 @@
+A stack of coins with the top coin being a penny.

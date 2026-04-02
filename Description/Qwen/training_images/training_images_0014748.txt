@@ -1,0 +1,1 @@
+A game of Tic Tac Toe with three X's in a row on the bottom left to middle right diagonal and two O's above them, indicating that it was played by players taking turns placing their marks until one player wins

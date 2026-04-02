@@ -1,0 +1,1 @@
+A white chess piece on a black and white checkered board.

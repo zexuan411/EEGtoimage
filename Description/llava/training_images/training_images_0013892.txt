@@ -1,0 +1,1 @@
+A stopwatch with the time 5:30.

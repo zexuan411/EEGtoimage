@@ -1,0 +1,1 @@
+A hexagonal grid on a board game with various tokens and markers, including red cubes and blue hexagons.

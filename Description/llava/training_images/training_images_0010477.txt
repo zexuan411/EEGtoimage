@@ -1,0 +1,1 @@
+A concrete table with a shadow on it.

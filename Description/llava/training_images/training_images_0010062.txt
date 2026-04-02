@@ -1,0 +1,1 @@
+A red pedometer with a screen displaying the time and distance.

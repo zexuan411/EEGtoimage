@@ -1,0 +1,1 @@
+The breathalyzer displays "0.215" on its screen, indicating a blood alcohol concentration (BAC) level below 0.8%.

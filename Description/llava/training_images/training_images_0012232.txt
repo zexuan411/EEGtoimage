@@ -1,0 +1,1 @@
+A scoreboard with a football game in progress.

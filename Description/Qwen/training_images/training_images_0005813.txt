@@ -1,0 +1,1 @@
+A pressure gauge with both psi and bar markings, showing no current reading.

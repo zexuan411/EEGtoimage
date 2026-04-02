@@ -1,0 +1,1 @@
+A silver calculator with buttons and display, placed on top of financial documents.

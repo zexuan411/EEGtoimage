@@ -1,0 +1,1 @@
+A white digital thermostat with buttons for time, program, run, hold, fan system selection and temperature display showing 23 degrees Celsius and 26 degrees Fahrenheit.

@@ -1,0 +1,1 @@
+A record player with a record on it.

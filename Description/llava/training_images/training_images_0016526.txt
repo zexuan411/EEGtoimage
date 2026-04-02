@@ -1,0 +1,1 @@
+A zipper on a bag.

@@ -1,0 +1,1 @@
+A polygraph machine with grid lines and measurement markers, including a black strip for alignment.

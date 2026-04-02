@@ -1,0 +1,1 @@
+A wooden tic-tac-toe board with colored pieces on grass, and some extra pieces scattered around it.

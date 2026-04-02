@@ -1,0 +1,1 @@
+A pressure gauge with markings from 0 to 2 bar and MPa, showing a reading slightly above 1 bar.

@@ -1,0 +1,1 @@
+The thermometer shows temperatures ranging from 0 to 50 degrees Celsius, with a current reading around 28°C.

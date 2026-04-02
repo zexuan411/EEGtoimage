@@ -1,0 +1,1 @@
+The checkerboard has alternating light and dark squares, with black and white pieces placed on it.

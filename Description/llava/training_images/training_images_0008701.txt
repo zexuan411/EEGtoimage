@@ -1,0 +1,1 @@
+A mat with a pattern of knots.

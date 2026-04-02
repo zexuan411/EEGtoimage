@@ -1,0 +1,1 @@
+A scoreboard with the number 10 on it.

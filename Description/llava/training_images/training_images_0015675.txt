@@ -1,0 +1,1 @@
+A vent with a pattern of squares and diamonds.

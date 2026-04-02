@@ -1,0 +1,1 @@
+The wallet has multiple cards inside, including an Access Card and a Fuel Savings card.

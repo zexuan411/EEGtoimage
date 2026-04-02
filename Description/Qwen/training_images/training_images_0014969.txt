@@ -1,0 +1,1 @@
+The torch has an intricate design with cutouts and is emitting bright flames, surrounded by greenery.

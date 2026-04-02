@@ -1,0 +1,1 @@
+A white GPS speedometer with numbers 1 to 9 and an arrow pointing at number 3, indicating a reading of approximately 20 mph (miles per hour).

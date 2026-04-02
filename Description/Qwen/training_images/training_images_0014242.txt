@@ -1,0 +1,1 @@
+The toggle switch has labels for "ON" and "OFF," with the handle positioned between them, indicating it's not turned on or off yet.

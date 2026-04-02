@@ -1,0 +1,1 @@
+A pressure gauge with temperature and psi readings, showing 105°F and 248 PSI on its dial.

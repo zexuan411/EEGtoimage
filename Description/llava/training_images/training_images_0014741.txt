@@ -1,0 +1,1 @@
+A blue grid with black x's.

@@ -1,0 +1,1 @@
+A yellow traffic light with three lights, showing green at the bottom and red on top.

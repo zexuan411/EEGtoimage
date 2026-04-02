@@ -1,0 +1,1 @@
+A red pushpin is inserted into a map, marking a specific location.

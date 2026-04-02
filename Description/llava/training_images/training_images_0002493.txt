@@ -1,0 +1,1 @@
+A cash register with a receipt in it.

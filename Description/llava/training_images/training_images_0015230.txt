@@ -1,0 +1,1 @@
+A triangle with a red handle.

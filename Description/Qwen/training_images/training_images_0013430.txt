@@ -1,0 +1,1 @@
+The speedometer displays "km/h" and has illuminated markings for speeds up to 140 km/h, with additional smaller markers indicating intervals between 20 and 80 kmh.

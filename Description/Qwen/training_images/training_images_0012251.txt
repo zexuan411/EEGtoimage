@@ -1,0 +1,1 @@
+A Scrabble board with tiles arranged, including letters like "PRF" and various words formed on it.
