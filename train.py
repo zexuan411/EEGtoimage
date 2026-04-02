@@ -1,39 +1,36 @@
+import os
 import argparse
-parser = argparse.ArgumentParser(description='Experiment Stimuli Recognition test')
+parser = argparse.ArgumentParser(description='Experiment Stimuli Recognition test with CLIP encoder')
 parser.add_argument('--epoch', default=150, type=int)
 parser.add_argument('--num_sub', default=10, type=int,
-                help='number of subjects used in the experiments. ')
+                    help='number of subjects used in the experiments. ')
 parser.add_argument('--batch-size', '--batch_size', default=1000, type=int,
-                dest='batch_size',
-                metavar='N',
-                help='mini-batch size (default: 1000), this is the total '
-                    'batch size of all GPUs on the current node when '
-                    'using Data Parallel or Distributed Data Parallel')
+                    dest='batch_size',
+                    metavar='N',
+                    help='mini-batch size (default: 1000), this is the total '
+                         'batch size of all GPUs on the current node when '
+                         'using Data Parallel or Distributed Data Parallel')
 parser.add_argument('--encoder_type', type=str, default='HYBRID', help='Encoder type') # NICE # ATMS # MCRL # HYBRID
 parser.add_argument('--no_pretrain', default=False, action='store_true',
-                help='Do not load MAE pretrained weights (train from scratch)')
+                    help='Do not load MAE pretrained weights (train from scratch)')
 parser.add_argument('--seed', default=2023, type=int,
-                help='seed for initializing training. ')
-parser.add_argument('--result_path', type=str, default='/mnt/disk1/zexuanchen/results/')
-parser.add_argument('--mae_ckpt_dir', type=str, default='/mnt/disk1/zexuanchen/results/mae_eeg_pretrain/checkpoints')
-parser.add_argument('--eeg_data_path', type=str, default='/mnt/disk1/zexuanchen/Things_EEG2/Preprocessed_data_250Hz/')
-parser.add_argument('--img_train_path', type=str, default='/mnt/disk1/zexuanchen/EEG2image/clip-rn50_features_train.pt')
-parser.add_argument('--img_test_path', type=str, default='/mnt/disk1/zexuanchen/EEG2image/clip-rn50_features_test.pt')
-parser.add_argument('--txt_feature', type=str, default='/mnt/disk1/zexuanchen/EEG2image/DNN_feature_maps/pca_feature_maps/Qwen/pretrained-True')
-parser.add_argument('--enable_ie_mae_autoload', type=str, default='False')  
+                    help='seed for initializing training. ')
+parser.add_argument('--result_path', type=str, default='./results/')  
+parser.add_argument('--eeg_data_path', type=str, default='./Things_EEG2/Preprocessed_data_250Hz/')  
+parser.add_argument('--img_train_path', type=str, default='./EEG2image/features/clip-rn50_features_train.pt')
+parser.add_argument('--img_test_path', type=str, default='./EEG2image/features/clip-rn50_features_test.pt')
+parser.add_argument('--txt_feature', type=str, default='./EEG2image/features/')
 parser.add_argument('--early_stopping', action='store_true', default=True,
-                help='Enable early stopping with 10 epochs patience on validation loss')
-parser.add_argument('--insubject', action='store_true', default=True,
-                help='If set, run in in-subject mode (each subject trained/tested independently). If not set, run cross-subject.')
-parser.add_argument('--alpha', type=float, default=0.1,
-                help='Weight for image-text contrastive loss in total loss computation')
-parser.add_argument('--load_pretrain_groups', type=str, default='ALL')
-parser.add_argument('--init_groups', type=str, default='ALL')
+                    help='Enable early stopping with 20 epochs patience on validation loss')
+parser.add_argument('--load_pretrain_groups', type=str, default='ALL',
+                    help='Parameter groups to load from pretrain: W(Weights),N(Norm),S(Structural),T(Token),B(Bias)')
+parser.add_argument('--init_groups', type=str, default='ALL',
+                    help='Parameter groups to initialize: W(Weights),N(Norm),S(Structural),T(Token),B(Bias)')
 parser.add_argument('--init_safe_groups', type=str, default='ENC,GAT,POS,CATTN,CNN,PROJ',
-                help='Parameter groups that are SAFE to reinitialize (default: ENC,GAT,POS,CATTN,CNN,PROJ)')
+                    help='Parameter groups that are SAFE to reinitialize (default: ENC,GAT,POS,CATTN,CNN,PROJ)')
+parser.add_argument('--exp_id', type=str, default=None,
+                    help='Experiment identifier for output filename (default: auto-generate from config)')
 
-import os
-import sys
 import random
 import itertools
 import datetime
@@ -41,25 +38,11 @@ import time
 import numpy as np
 import pandas as pd
 import glob
-import re
-import hashlib
-import json
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.nn.init as init
-from torch import Tensor
 from torch.autograd import Variable
-from einops import rearrange, reduce, repeat
-from einops.layers.torch import Rearrange, Reduce
 from open_clip.loss import ClipLoss 
-from eeg_encoder import EEG_GAT
-from eeg_encoder import TransformerEncoder
-from torch_geometric.nn import GATConv
 import datetime
-import torch.signal as signal
-from timm.models.vision_transformer import Block
-
 # Import EEG encoder models from separate module
 from eeg_encoders import (
     NICE, ATMS, MCRL, HYBRID,
@@ -68,193 +51,15 @@ from eeg_encoders import (
     NoiseAugmentation, ChannelPositionEmbedding,
     Enc_eeg, Proj_eeg, PatchEmbedding, ResidualAdd, FlattenHead
 )
+from weightsinit import ParameterGroupManager
 
+gpus = [0]
+os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
+os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(map(str, gpus))
+model_idx = 'test_eeg1'
 
-def weights_init_tensor(name: str, t: torch.Tensor):
-    lname = name.lower()
-    with torch.no_grad():
-        if lname.endswith("bias"):
-            t.zero_()
-            return
-        # LayerNorm weights often end with .weight but should be 1.0
-        if "norm" in lname or "layernorm" in lname:
-            # only weights should be 1; bias handled above
-            if lname.endswith("weight"):
-                t.fill_(1.0)
-            return
-        # default for weights
-        t.normal_(0.0, 0.02)
-
-
-class ParameterGroupManager:
-    """
-    Groups are matched by regex over FULL parameter names (model.named_parameters()).
-    """
-    GROUP_PATTERNS = {
-        "SUBJ":  [r"^subject_layer\.weights$", r"^subject_wise_linear\."],
-        "ENC":   [r"^encoder\." , r"^embed\.", r"^nsam\.", r"^noise_aug\."],
-        "GAT":   [r"^gatnn\."],
-        "POS":   [r"^channel_pos_embedding\.", r"^pos_proj\.", r"\.pos_embed", r"\.position_embedding"],
-        "CATTN": [r"^channel_attention\.", r"\.channel_attention\."],
-        "NORM":  [r"^feature_norm(\.|$)", r"^feature_norm2(\.|$)", r"\.norm\d*\.", r"\.norm\d*$"],
-        "CNN":   [r"^enc_eeg\."],
-        "PROJ":  [r"^proj_eeg\."],
-        "LOGIT": [r"^logit_scale$"],
-        "DEC":   [r"^decoder", r"^mask_token"],  # MAE decoder parameters
-    }
-
-    LEGACY_ALIASES = {
-        "W": {"SUBJ", "ENC", "GAT", "POS", "CATTN", "CNN", "PROJ", "LOGIT"},
-        "N": {"NORM"},
-        "S": {"SUBJ", "POS", "CATTN"},
-        "T": set(),
-        "B": {"SUBJ", "ENC", "GAT", "POS", "CATTN", "CNN", "PROJ"},
-    }
-
-    # groups that are safe to re-init (by default)
-    INIT_SAFE = {
-        "SUBJ": False,   
-        "ENC":  True,   
-        "GAT":  True,
-        "POS":  True,
-        "CATTN": True,
-        "NORM": False,   
-        "CNN":  True,
-        "PROJ": True,
-        "LOGIT": False,  
-        "DEC":  False,   
-    }
-
-    @staticmethod
-    def set_init_safe(init_safe_groups: set):
-        """
-        Update INIT_SAFE dict based on specified groups.
-        Groups in init_safe_groups are set to True, all others to False.
-        """
-        # Create a new INIT_SAFE with all False
-        new_init_safe = {g: False for g in ParameterGroupManager.GROUP_PATTERNS.keys()}
-        # Set specified groups to True
-        for g in init_safe_groups:
-            if g in new_init_safe:
-                new_init_safe[g] = True
-        ParameterGroupManager.INIT_SAFE = new_init_safe
-
-    @staticmethod
-    def compile_patterns():
-        compiled = {}
-        for g, pats in ParameterGroupManager.GROUP_PATTERNS.items():
-            compiled[g] = [re.compile(p) for p in pats]
-        return compiled
-
-    _COMPILED = {}  # Will be initialized after class definition
-
-    @staticmethod
-    def get_group(param_name: str) -> str:
-        for g, regexes in ParameterGroupManager._COMPILED.items():
-            for rx in regexes:
-                if rx.search(param_name):
-                    return g
-        return "OTHER"
-
-    @staticmethod
-    def parse_groups(s: str):
-        """
-        Parse comma-separated groups.
-        Special token 'ALL' expands to all known groups.
-        """
-        raw = [x.strip().upper() for x in s.split(",") if x.strip()]
-        if not raw:
-            return set()
-        all_groups = set(ParameterGroupManager.GROUP_PATTERNS.keys())
-        if "ALL" in raw:
-            return all_groups
-
-        expanded = set()
-        recognized = False
-        for token in raw:
-            if token in all_groups:
-                expanded.add(token)
-                recognized = True
-                continue
-            if token in ParameterGroupManager.LEGACY_ALIASES:
-                expanded.update(ParameterGroupManager.LEGACY_ALIASES[token])
-                recognized = True
-                continue
-
-        if recognized:
-            return expanded
-
-        if not expanded and raw:
-            return set(ParameterGroupManager.GROUP_PATTERNS.keys())
-        return expanded
-
-    @staticmethod
-    def remap_ckpt_key(k: str) -> str:
-        """
-        Normalize ckpt keys into model-key candidates space.
-        We will try multiple forms later; here only cheap normalization.
-        """
-        # remove dp wrappers
-        for p in ("module.", "model.", "eeg_model."):
-            if k.startswith(p):
-                k = k[len(p):]
-        # collapse encoder.encoder.
-        if k.startswith("encoder.encoder."):
-            k = "encoder." + k[len("encoder.encoder."):]
-        return k
-
-    @staticmethod
-    def build_load_dict(model: nn.Module, ckpt_sd: dict, load_groups: set) -> dict:
-        """
-        Create a filtered & remapped state_dict that matches model.state_dict keys.
-        Strategy:
-          - normalize key
-          - try direct match
-          - if startswith encoder., also try dropping encoder. prefix (some models are encoder-only)
-        """
-        model_sd = model.state_dict()
-        model_keys = set(model_sd.keys())
-
-        out = {}
-        for k, v in ckpt_sd.items():
-            kk = ParameterGroupManager.remap_ckpt_key(k)
-
-            candidates = [kk]
-            if kk.startswith("encoder."):
-                candidates.append(kk[len("encoder."):])
-            if kk.startswith("encoder.embed."):
-                candidates.append("encoder." + kk[len("encoder.embed."):])
-                candidates.append(kk[len("encoder.embed."):])
-
-            for cand in candidates:
-                if cand in model_keys:
-                    g = ParameterGroupManager.get_group(cand)
-                    if g in load_groups:
-                        out[cand] = v
-                    break
-        return out
-
-    @staticmethod
-    def selective_reinit(model: nn.Module, init_groups: set):
-        """
-        Reinitialize parameters by group, by tensor-level init.
-        LN handled specially (weight=1, bias=0).
-        """
-        changed = []
-        for name, p in model.named_parameters():
-            g = ParameterGroupManager.get_group(name)
-            if g in init_groups:
-                # safety gate (optional): if a group is not init-safe, skip
-                if not ParameterGroupManager.INIT_SAFE.get(g, True):
-                    continue
-                weights_init_tensor(name, p.data)
-                changed.append(name)
-        return changed
-
-
-# Initialize _COMPILED patterns after class definition
 ParameterGroupManager._COMPILED = ParameterGroupManager.compile_patterns()
-
+    
 class Proj_img(nn.Sequential):
     def __init__(self, embedding_dim=1024, proj_dim=1024, drop_proj=0.3):
         super().__init__(
@@ -270,7 +75,6 @@ class Proj_img(nn.Sequential):
 class IE():
     def __init__(self, args, nsub):
         super(IE, self).__init__()
-        
         self.args = args
         self.num_class = 200
         self.batch_size = args.batch_size
@@ -284,7 +88,6 @@ class IE():
         self.b1 = 0.5
         self.b2 = 0.999
         self.nSub = nsub
-        self.insubject = args.insubject
         
         self.start_epoch = 0
         self.eeg_data_path = args.eeg_data_path
@@ -292,8 +95,6 @@ class IE():
         self.test_feature_file_path = args.img_test_path
         self.txt_features_path = args.txt_feature
         self.early_stopping = args.early_stopping
-
-        self.pretrain = False
 
         self.log_write = open(args.result_path + "log_subject%d.txt" % self.nSub, "w")
         self.Tensor = torch.cuda.FloatTensor
@@ -306,31 +107,26 @@ class IE():
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-
+        self.Enc_eeg = Enc_eeg().cuda()
+        self.Proj_eeg = Proj_eeg().cuda()
         self.eeg_model = globals()[args.encoder_type]().cuda()
         self.Proj_img = Proj_img().cuda()
 
         self.module_name = args.encoder_type
-        self.model_idx = f"{self.module_name}_sub{self.nSub:02d}"
-        self.best_eeg_sds = []
-        self.best_proj_img_sds = []
-        self.best_eeg_sd = None
-        self.best_proj_img_sd = None
         
-        # Parse ablation parameters
         self.load_pretrain_groups = ParameterGroupManager.parse_groups(args.load_pretrain_groups)
         self.init_groups = ParameterGroupManager.parse_groups(args.init_groups)
         
-        # Set safe initialization groups
         init_safe_groups = ParameterGroupManager.parse_groups(args.init_safe_groups)
         ParameterGroupManager.set_init_safe(init_safe_groups)
-        print(f"[INIT_SAFE Config] {ParameterGroupManager.INIT_SAFE}")
-        
+        # print(f"[INIT_SAFE Config] {ParameterGroupManager.INIT_SAFE}")
+
         # Load MAE pretrained weights if not disabled
         if not args.no_pretrain:
             print("Attempting to load MAE pretrained weights...")
+            print("Module name for checkpoint search:", self.module_name)
 
-            ckpt_dir = args.mae_ckpt_dir
+            ckpt_dir = os.path.join(args.result_path, 'mae_eeg_pretrain', 'checkpoints')
             pattern = os.path.join(ckpt_dir, f"mae_pretrain_{self.module_name}_sub{self.nSub:02d}_*.pth")
             candidates = glob.glob(pattern)
             candidates = [p for p in candidates if os.path.isfile(p)]
@@ -340,21 +136,7 @@ class IE():
                 print(f"Found MAE checkpoint for subject {self.nSub}: {ckpt_path}. Attempting to load into eeg_model.")
 
                 loaded = torch.load(ckpt_path, map_location='cpu', weights_only=False)
-
                 state_dict = loaded.get('model_state', loaded) if isinstance(loaded, dict) else loaded
-
-                self._debug_ckpt_state_dict = state_dict  # keep for diagnosis
-                self._debug_ckpt_path = ckpt_path
-
-                # Use ParameterGroupManager to build load dict with group filtering
-                filtered_load_dict = ParameterGroupManager.build_load_dict(self.eeg_model, state_dict, self.load_pretrain_groups)
-                
-                # missing, unexpected = self.eeg_model.load_state_dict(filtered_load_dict, strict=False)
-                # print(f"Loaded {len(filtered_load_dict)} parameters into self.eeg_model (groups: {self.load_pretrain_groups}).")
-                # print(f"Missing keys: {len(missing)}, Unexpected keys: {len(unexpected)}")
-
-                encoder_keys = filtered_load_dict
-
             else:
                 print(f"No MAE checkpoint found for subject {self.nSub} at {ckpt_dir}")
                 print("Training from scratch...")
@@ -362,10 +144,11 @@ class IE():
         else:
             print("--no_pretrain flag set. Training from scratch without loading MAE weights.")
             self.eeg_model = nn.DataParallel(self.eeg_model, device_ids=[i for i in range(len(gpus))])
+            self.centers = {}
+        
         print('initial define done.')
 
-
-
+     
     def evaluate_model(self, eeg_features, img_features_all, labels, k):
         """
         Evaluate the model for k-way retrieval using batch image features.
@@ -380,7 +163,6 @@ class IE():
             selected_classes = random.sample(possible_classes, k - 1) + [label.item()]
 
             selected_img_features = img_features_all[selected_classes]
-
             similarity = (100.0 * eeg_features[idx] @ selected_img_features.T).softmax(dim=-1)
             predicted_label = selected_classes[torch.argmax(similarity).item()]
             if predicted_label == label.item():
@@ -391,156 +173,49 @@ class IE():
         return accuracy
 
 
-    def evaluate_model_classification(self, eeg_features, text_features_all, labels, k):
-        """k-way classification using text features (class space)."""
-        total = 0
-        correct = 0
-        all_labels = set(range(text_features_all.size(0)))
-
-        for idx, label in enumerate(labels):
-            possible_classes = list(all_labels - {label.item()})
-            selected_classes = random.sample(possible_classes, k - 1) + [label.item()]
-            selected_text_features = text_features_all[selected_classes]
-            similarity = (100.0 * eeg_features[idx] @ selected_text_features.T).softmax(dim=-1)
-            predicted_label = selected_classes[torch.argmax(similarity).item()]
-            if predicted_label == label.item():
-                correct += 1
-            total += 1
-
-        accuracy = correct / total
-        return accuracy
-
-
-    def evaluate_topk_epoch(self, text_feats_all):
-        self.eeg_model.eval()
-        self.Proj_img.eval()
-        total = 0
-        top1 = 0
-        top5 = 0
-        top1_cls = 0
-        top5_cls = 0
-
-        with torch.no_grad():
-            for teeg, timg, ttext, tlabel in self.test_dataloader:
-
-                teeg = teeg.cuda().type(self.Tensor)
-                timg_features = timg.cuda().type(self.Tensor)
-                tlabel = tlabel.type(self.LongTensor).cuda()
-
-                subject_ids = torch.full((teeg.size(0),), self.nSub - 1, dtype=torch.long).cuda()
-                teeg = teeg.squeeze(1)
-                tfea = self.eeg_model(teeg, subject_ids)
-                tfea = tfea / (tfea.norm(dim=1, keepdim=True) + 1e-12)
-                
-                timg_features = self.Proj_img(timg_features)
-                timg_features = timg_features / (timg_features.norm(dim=1, keepdim=True) + 1e-12)
-                
-                sim = (100.0 * tfea @ timg_features.t()).softmax(dim=-1)
-                _, indices = sim.topk(5)
-                tt_label = tlabel.view(-1, 1)
-                total += tlabel.size(0)
-                top1 += (tt_label == indices[:, :1]).sum().item()
-                top5 += (tt_label == indices[:, :5]).sum().item()
-
-                sim_class = (100.0 * tfea @ text_feats_all.t()).softmax(dim=-1)
-                _, indices_class = sim_class.topk(5)
-                top1_cls += (tt_label == indices_class[:, :1]).sum().item()
-                top5_cls += (tt_label == indices_class[:, :5]).sum().item()
-
-        if total == 0:
-            return 0.0, 0.0, 0.0, 0.0
-        return top1 / total, top5 / total, top1_cls / total, top5_cls / total
-    
-
     def get_eeg_data(self):
         train_data = []
         train_label = []
         test_data = []
         test_label = np.arange(200)
 
-        if self.insubject:
-            # In-subject mode: train and test on the same subject
-            train_data = np.load(self.eeg_data_path + '/sub-' + format(self.nSub, '02') + '/preprocessed_eeg_training.npy', allow_pickle=True)
-            train_data = train_data['preprocessed_eeg_data']
-            train_data = np.mean(train_data, axis=1)
-            train_data = np.expand_dims(train_data, axis=1)
+        train_data = np.load(self.eeg_data_path + '/sub-' + format(self.nSub, '02') + '/preprocessed_eeg_training.npy', allow_pickle=True)
+        train_data = train_data['preprocessed_eeg_data']
+        train_data = np.mean(train_data, axis=1)
+        train_data = np.expand_dims(train_data, axis=1)
 
-            test_data = np.load(self.eeg_data_path + '/sub-' + format(self.nSub, '02') + '/preprocessed_eeg_test.npy', allow_pickle=True)
-            test_data = test_data['preprocessed_eeg_data']
-            test_data = np.mean(test_data, axis=1)
-            test_data = np.expand_dims(test_data, axis=1)
-        else:
-            # Cross-subject mode: train on all subjects except self.nSub, test on self.nSub
-            all_train_data = []
-            for sub_id in range(1, 11):  # Assuming 10 subjects in total
-                if sub_id != self.nSub:
-                    sub_train = np.load(self.eeg_data_path + '/sub-' + format(sub_id, '02') + '/preprocessed_eeg_training.npy', allow_pickle=True)
-                    sub_train = sub_train['preprocessed_eeg_data']
-                    sub_train = np.mean(sub_train, axis=1)
-                    sub_train = np.expand_dims(sub_train, axis=1)
-                    all_train_data.append(sub_train)
-            
-            # Concatenate all training data from other subjects
-            if all_train_data:
-                train_data = np.concatenate(all_train_data, axis=0)
-            else:
-                train_data = np.array([])
-            
-            # Test on self.nSub
-            test_data = np.load(self.eeg_data_path + '/sub-' + format(self.nSub, '02') + '/preprocessed_eeg_test.npy', allow_pickle=True)
-            test_data = test_data['preprocessed_eeg_data']
-            test_data = np.mean(test_data, axis=1)
-            test_data = np.expand_dims(test_data, axis=1)
+        test_data = np.load(self.eeg_data_path + '/sub-' + format(self.nSub, '02') + '/preprocessed_eeg_test.npy', allow_pickle=True)
+        test_data = test_data['preprocessed_eeg_data']
+        test_data = np.mean(test_data, axis=1)
+        test_data = np.expand_dims(test_data, axis=1)
 
         return train_data, train_label, test_data, test_label
     
 
     def get_image_data(self):
-        # In cross-subject mode, train image features should correspond to training EEG from multiple subjects
-        # For now, keep the full training set for cross-subject to maintain consistency
         train_data = torch.load(self.train_feature_file_path)
-        train_img_feature = train_data["img_features"]    # shape: (16540, 1024)
         test_data = torch.load(self.test_feature_file_path)
-        test_img_feature = test_data["img_features"]    # shape: (200, 1024)
+        train_img_feature = train_data["img_features"] 
+        test_img_feature = test_data["img_features"] 
         return train_img_feature, test_img_feature
 
     
     def get_text_data(self):
-        # In cross-subject mode, train text features should correspond to training EEG from multiple subjects
-        # For now, keep the full training set for cross-subject to maintain consistency
-        train_txt_feature = np.load(self.txt_features_path + "/Qwen_feature_maps_training_newclip_cn.npy", allow_pickle=True)
-        test_txt_feature = np.load(self.txt_features_path + "/Qwen_feature_maps_test_newclip_cn.npy", allow_pickle=True)
-        # train_txt_feature = np.load(self.txt_features_path + "/LLaVa_feature_maps_training_newclip_cn.npy", allow_pickle=True)
-        # test_txt_feature = np.load(self.txt_features_path + "/LLaVa_feature_maps_test_newclip_cn.npy", allow_pickle=True)
-    
+        train_path = os.path.join(self.txt_features_path, f"Qwen_feature_maps_training_clip_cn.npy")
+        test_path = os.path.join(self.txt_features_path, f"Qwen_feature_maps_test_clip_cn.npy")
+        train_txt_feature = np.load(train_path, allow_pickle=True)
+        test_txt_feature = np.load(test_path, allow_pickle=True)
         train_txt_feature = np.squeeze(train_txt_feature)
         test_txt_feature = np.squeeze(test_txt_feature)
+        # print("train_txt_feature shape:", train_txt_feature.shape)
         return train_txt_feature, test_txt_feature
 
 
     def train(self):
-
+        ParameterGroupManager.selective_reinit(self.eeg_model, self.init_groups)
         train_eeg, _, test_eeg, test_label = self.get_eeg_data()
         train_img_feature, test_img_feature = self.get_image_data()
         train_txt_feature, test_txt_feature = self.get_text_data()
-
-        # In cross-subject mode, train EEG data comes from multiple subjects
-        # We need to match the image and text features to the size of training EEG data
-        eeg_train_size = len(train_eeg)
-        img_train_size = len(train_img_feature)
-        
-        if not self.insubject and eeg_train_size != img_train_size:
-            # Cross-subject mode: training data size mismatch, need to repeat image/text features
-            print(f"Cross-subject mode: EEG training size {eeg_train_size} != image training size {img_train_size}")
-            # Calculate repetition factor
-            rep_factor = int(np.ceil(eeg_train_size / img_train_size))
-            # Repeat and truncate to match EEG size (preserve tensor type for images)
-            if torch.is_tensor(train_img_feature):
-                train_img_feature = train_img_feature.repeat(rep_factor, 1)[:eeg_train_size]
-            else:
-                train_img_feature = np.tile(train_img_feature, (rep_factor, 1))[:eeg_train_size]
-            train_txt_feature = np.tile(train_txt_feature, (rep_factor, 1))[:eeg_train_size]
-            print(f"Repeated image/text features to match EEG size: {len(train_img_feature)}")
 
         # shuffle the training data (use numpy index for numpy arrays, torch index for tensors)
         train_shuffle = np.random.permutation(len(train_eeg))
@@ -550,15 +225,18 @@ class IE():
 
         val_eeg = torch.from_numpy(train_eeg[:740])
         val_image = train_img_feature[:740]
+        val_image = torch.from_numpy(val_image) if isinstance(val_image, np.ndarray) else val_image
         val_text = torch.from_numpy(train_txt_feature[:740])
 
         train_eeg = torch.from_numpy(train_eeg[740:])
         train_image = train_img_feature[740:]
+        train_image = torch.from_numpy(train_image) if isinstance(train_image, np.ndarray) else train_image
         train_text = torch.from_numpy(train_txt_feature[740:])
 
         test_eeg = torch.from_numpy(test_eeg)
         test_label = torch.from_numpy(test_label)
         test_txt_feature = torch.from_numpy(test_txt_feature)
+        test_img_feature = torch.from_numpy(test_img_feature) if isinstance(test_img_feature, np.ndarray) else test_img_feature
 
         dataset = torch.utils.data.TensorDataset(train_eeg, train_image, train_text)
         self.dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=self.batch_size, shuffle=True)
@@ -574,14 +252,14 @@ class IE():
         self.optimizer_img = torch.optim.AdamW(itertools.chain(self.Proj_img.parameters()), lr=self.lr, betas=(self.b1, self.b2), weight_decay=0.01)
         
         # Track top-3 best models based on validation loss
-        top3_models = []  # List of tuples: (val_loss, epoch, state_dict, train_loss)
+        top3_models = []  
         
         # Early stopping based on validation loss with patience
         patience = 10  
         patience_counter = 0
-        
+
         for e in range(self.n_epochs):
-            epoch_num = e + 1  # use 1-based epoch for logging
+            epoch_num = e + 1  
             self.eeg_model.train()
             self.Proj_img.train()
             
@@ -598,27 +276,25 @@ class IE():
                 labels = Variable(labels.cuda().type(self.LongTensor))
 
                 img_features = self.Proj_img(img_features)
+                # Normalize features
+                img_features = img_features / img_features.norm(dim=1, keepdim=True)
+                txt_features = txt_features / txt_features.norm(dim=1, keepdim=True)
 
                 batch_size = eeg.size(0)
                 subject_ids = torch.full((batch_size,), self.nSub - 1, dtype=torch.long).cuda()
                 eeg = eeg.squeeze(1)
                 eeg_features = self.eeg_model(eeg, subject_ids)
-
-                # Normalize features
                 eeg_features = eeg_features / eeg_features.norm(dim=1, keepdim=True)
-                img_features = img_features / img_features.norm(dim=1, keepdim=True)
-                txt_features = txt_features / txt_features.norm(dim=1, keepdim=True)
 
-                logit_scale = self.logit_scale.exp()
                 # contrative loss - EEG and image
-                loss_cos_ie = self.criterion_cls(eeg_features, img_features, logit_scale)
-                # contrative loss - image and text
-                loss_cos_it = self.criterion_cls(img_features, txt_features, logit_scale)
+                logit_scale = self.logit_scale.exp()
 
-                loss = (1 - self.args.alpha) * loss_cos_ie + self.args.alpha * loss_cos_it
+                loss_cos_ie = self.criterion_cls(eeg_features, img_features, logit_scale)
+                loss_cos_it = self.criterion_cls(img_features, txt_features, logit_scale)
                 
+                alpha = 0.1
+                loss = (1 - alpha) * loss_cos_ie + alpha * loss_cos_it
                 # Track training loss
-                # train_loss_sum += loss_cos_ie.item()
                 train_loss_sum += loss.item()
                 train_batches += 1
                 
@@ -648,8 +324,8 @@ class IE():
                         veeg_features = self.eeg_model(veeg, subject_ids)
                         vimg_features = self.Proj_img(vimg_features)
                         vtxt_features = vtxt.cuda().type(self.Tensor)
-
                         vtxt_features = vtxt_features / vtxt_features.norm(dim=1, keepdim=True)
+
                         veeg_features = veeg_features / veeg_features.norm(dim=1, keepdim=True)
                         vimg_features = vimg_features / vimg_features.norm(dim=1, keepdim=True)
 
@@ -657,7 +333,9 @@ class IE():
 
                         vloss1 = self.criterion_cls(veeg_features, vimg_features, logit_scale)
                         vloss2 = self.criterion_cls(vimg_features, vtxt_features, logit_scale)
-                        vloss = (1 - self.args.alpha) * vloss1 + self.args.alpha * vloss2
+                        alpha = 0.1
+                        vloss = (1 - alpha) * vloss1 + alpha * vloss2
+                        
                         vloss_sum += vloss.item()
                         val_batches += 1
                     
@@ -671,6 +349,7 @@ class IE():
                     proj_img_sd_cpu = {k: v.cpu().clone() for k, v in proj_img_sd.items()}
                         
                 print('Epoch:', e, '  Validation Loss: %.4f' % (vloss_val,))
+
 
                 # Update top-3 models list
                 # Track if this epoch improved the top-3 models (for early stopping)
@@ -702,24 +381,21 @@ class IE():
                         patience_counter += 1
                         print(f'  [Patience: {patience_counter}/{patience}]')
                         if patience_counter >= patience:
-                            # print(f'\n*** Early stopping triggered at epoch {epoch_num} after {patience} epochs without improvement ***')
+                            print(f'\n*** Early stopping triggered at epoch {epoch_num} after {patience} epochs without improvement ***')
                             if top3_models:
                                 print(f'Best val loss: {top3_models[0][0]:.4f} at epoch {top3_models[0][1]}')
                             break
 
         # Load best models for final evaluation
         if top3_models:
-            print(f"\nLoading top-3 best models for ensemble testing:")
-            for idx, (val_loss, epoch_num, _, _, train_loss) in enumerate(top3_models):
-                print(f"  Model {idx+1}: Epoch {epoch_num} (Val Loss: {val_loss:.4f}, Train Loss: {train_loss:.4f})")
-            
+
             # Save the three best models
             os.makedirs('./model/', exist_ok=True)
             best_eeg_sds = []
             best_proj_img_sds = []
             for idx, (val_loss, epoch_num, eeg_sd, proj_img_sd, _) in enumerate(top3_models):
-                torch.save(eeg_sd, f'./model/{self.model_idx}_eeg_model_top{idx+1}_epoch{epoch_num}.pth')
-                torch.save(proj_img_sd, f'./model/{self.model_idx}_proj_img_model_top{idx+1}_epoch{epoch_num}.pth')
+                torch.save(eeg_sd, f'./model/{model_idx}_eeg_model_top{idx+1}_epoch{epoch_num}.pth')
+                torch.save(proj_img_sd, f'./model/{model_idx}_proj_img_model_top{idx+1}_epoch{epoch_num}.pth')
                 best_eeg_sds.append(eeg_sd)
                 best_proj_img_sds.append(proj_img_sd)
         else:
@@ -727,20 +403,15 @@ class IE():
             best_eeg_sds = []
             best_proj_img_sds = []
 
-        self.best_eeg_sds = best_eeg_sds
-        self.best_proj_img_sds = best_proj_img_sds
-        if best_eeg_sds:
-            self.best_eeg_sd = best_eeg_sds[0]
-            self.best_proj_img_sd = best_proj_img_sds[0]
-
         # Final test evaluation with ensemble of top-3 models
         all_results = {k: [] for k in [2, 4, 10, 20, 50, 100]}
         all_topacc = {k: [] for k in range(10)}
         all_results_class = {k: [] for k in [2, 4, 10, 20, 50, 100]}
         all_topacc_class = {k: [] for k in range(10)}
         
+
         for model_idx_ensemble, (best_eeg_sd, best_proj_img_sd) in enumerate(zip(best_eeg_sds, best_proj_img_sds)):
-            print(f"\n=== Testing with Model {model_idx_ensemble+1}/{len(best_eeg_sds)} ===")
+            # print(f"\n=== Testing with Model {model_idx_ensemble+1}/{len(best_eeg_sds)} ===")
             self.eeg_model.load_state_dict(best_eeg_sd, strict=False)
             self.Proj_img.load_state_dict(best_proj_img_sd, strict=False)
             self.eeg_model.eval()
@@ -772,8 +443,8 @@ class IE():
                     for k in [2, 4, 10, 20, 50, 100]:
                         # evaluate_model uses batch image features (timg_features) for k-way, like bestmodel1112.py
                         results[k] = results.get(k, 0.0) + self.evaluate_model(tfea, timg_features, tlabel, k=k) * tlabel.size(0)
-                        # description retrieval test using text features
-                        results_class[k] = results_class.get(k, 0.0) + self.evaluate_model_classification(tfea, ttext_features, tlabel, k=k) * tlabel.size(0)
+                        # classification k-way using text features (use self.test_text_features instead of ttext_features from dataloader)
+                        results_class[k] = results_class.get(k, 0.0) + self.evaluate_model(tfea, ttext_features, tlabel, k=k) * tlabel.size(0)
                 
                     sim = (100.0 * tfea @ timg_features.t()).softmax(dim=-1)
                     _, indices = sim.topk(10)
@@ -782,10 +453,12 @@ class IE():
                     for i in range(10):
                         resultsacc[i] += (tt_label == indices[:, :i+1]).sum().item()
 
+                    # classification top1-10 using text features (use self.test_text_features instead of ttext_features from dataloader)
+                    # sim_class = (100.0 * tfea @ text_feats_for_class.t()).softmax(dim=-1)
                     sim_class = (100.0 * tfea @ ttext_features.t()).softmax(dim=-1)
                     _, indices_class = sim_class.topk(10)
                     for i in range(10):
-                        resultsacc_class[i] += (tt_label == indices_class[:, :i+1]).sum().item()
+                        resultsacc_class[i] += (tlabel.view(-1, 1) == indices_class[:, :i+1]).sum().item()
 
             # finalize results aggregation for this model
             topacc = {i: float(resultsacc[i]) / float(total) for i in range(10)}
@@ -798,7 +471,6 @@ class IE():
             # Store results for ensemble averaging
             for k in range(10):
                 all_topacc[k].append(topacc[k])
-            for k in range(10):
                 all_topacc_class[k].append(topacc_class[k])
             for k in [2, 4, 10, 20, 50, 100]:
                 all_results[k].append(results[k])
@@ -833,162 +505,120 @@ class IE():
             (avg_results_class[2], avg_results_class[4], avg_results_class[10], avg_results_class[20], avg_results_class[50], avg_results_class[100]))
         self.log_write.write('ENSEMBLE AVERAGE - class-way-2-%.6f, class-way-4-%.6f, class-way-10-%.6f, class-way-20-%.6f, class-way-50-%.6f, class-way-100-%.6f\n' %
             (avg_results_class[2], avg_results_class[4], avg_results_class[10], avg_results_class[20], avg_results_class[50], avg_results_class[100]))
-        
         return avg_results, avg_topacc, avg_results_class, avg_topacc_class
         
-
 def main():
     args = parser.parse_args()
     num_sub = args.num_sub   
     cal_num = 0
+    
+    if args.exp_id is None:
+        import hashlib
+        config_str = f"{args.encoder_type}_{args.load_pretrain_groups}_{args.init_groups}_{args.no_pretrain}"
+        config_hash = hashlib.md5(config_str.encode()).hexdigest()[:6].upper()
+        args.exp_id = config_hash
+        print(f"Auto-generated exp_id: {args.exp_id}")
 
     top_k_accs = {k: [] for k in range(10)}  # retrieval top1-top10
     way_k_accs = {k: [] for k in [2, 4, 10, 20, 50, 100]}  # retrieval k-way
-    top_k_accs_class = {k: [] for k in range(10)}  # classification top1-top200
+    top_k_accs_class = {k: [] for k in range(10)}  # classification top1-top10
     way_k_accs_class = {k: [] for k in [2, 4, 10, 20, 50, 100]}  # classification k-way
+   
+    for i in range(num_sub):
+        cal_num += 1
+        # i = 7 + i 
+        starttime = datetime.datetime.now()
+        seed_n = args.seed
 
-    if args.insubject:
-        # In-subject: each subject trained/tested independently
-        for i in range(num_sub):
-            cal_num += 1
-            starttime = datetime.datetime.now()
-            seed_n = args.seed
+        print('seed is ' + str(seed_n))
+        random.seed(seed_n)
+        np.random.seed(seed_n)
+        torch.manual_seed(seed_n)
+        torch.cuda.manual_seed(seed_n)
+        torch.cuda.manual_seed_all(seed_n)
 
-            print('seed is ' + str(seed_n))
-            random.seed(seed_n)
-            np.random.seed(seed_n)
-            torch.manual_seed(seed_n)
-            torch.cuda.manual_seed(seed_n)
-            torch.cuda.manual_seed_all(seed_n)
+        print('Subject %d' % (i+1))
+        ie = IE(args, i + 1)
 
-            print('Subject %d' % (i+1))
-            ie = IE(args, i + 1)
+        results, topacc, results_class, topacc_class = ie.train() 
+    
+        endtime = datetime.datetime.now()
+        print('subject %d duration: '%(i+1) + str(endtime - starttime))
 
-            results, topacc, results_class, topacc_class = ie.train() 
-            print({k: round(v, 4) for k, v in topacc.items()})
-            print({k: round(v, 4) for k, v in results.items()})
-            print({k: round(v, 4) for k, v in topacc_class.items()})
-            print({k: round(v, 4) for k, v in results_class.items()})
+        # --- top-k accuracy ---
+        for k in range(10):
+            val = topacc.get(k, 0.0)  
+            top_k_accs[k].append(val)
+            val_cls = topacc_class.get(k, 0.0)
+            top_k_accs_class[k].append(val_cls)
 
-            endtime = datetime.datetime.now()
-            print('subject %d duration: '%(i+1) + str(endtime - starttime))
+        # --- k-way accuracy ---
+        for k in [2, 4, 10, 20, 50, 100]:
+            val = results.get(k, 0.0)
+            way_k_accs[k].append(val)
+            val_cls = results_class.get(k, 0.0)
+            way_k_accs_class[k].append(val_cls)
 
-            # --- top-k accuracy ---
+    # Create image retrieval and text retrieval results matrices (save separately)
+    if cal_num > 0:
+        # Retrieval results
+        retrieval_data = []
+        for sub_idx in range(cal_num):
+            row = []
             for k in range(10):
-                val = topacc.get(k, 0.0) 
-                top_k_accs[k].append(val)
-                val_cls = topacc_class.get(k, 0.0)
-                top_k_accs_class[k].append(val_cls)
-
-            # --- k-way accuracy ---
+                row.append(top_k_accs[k][sub_idx])
             for k in [2, 4, 10, 20, 50, 100]:
-                val = results.get(k, 0.0)
-                way_k_accs[k].append(val)
-                val_cls = results_class.get(k, 0.0)
-                way_k_accs_class[k].append(val_cls)
+                row.append(way_k_accs[k][sub_idx])
+            retrieval_data.append(row)
+
+        retrieval_avg_row = [np.mean(top_k_accs[k]) for k in range(10)] + \
+                            [np.mean(way_k_accs[k]) for k in [2, 4, 10, 20, 50, 100]]
+        retrieval_data.append(retrieval_avg_row)
+
+        retrieval_array = np.array(retrieval_data)
+        index = [f'subject_{i+1}' for i in range(cal_num)] + ['average']
+        retrieval_columns = [f'top{k+1}' for k in range(10)] + [f'{k}-way' for k in [2, 4, 10, 20, 50, 100]]
+
+        pd_retrieval = pd.DataFrame(data=np.round(retrieval_array, 4), index=index, columns=retrieval_columns)
+
+        # Classification results
+        classification_data = []
+        for sub_idx in range(cal_num):
+            row = []
+            for k in range(10):
+                row.append(top_k_accs_class[k][sub_idx])
+            for k in [2, 4, 10, 20, 50, 100]:
+                row.append(way_k_accs_class[k][sub_idx])
+            classification_data.append(row)
+
+        classification_avg_row = [np.mean(top_k_accs_class[k]) for k in range(10)] + \
+                                 [np.mean(way_k_accs_class[k]) for k in [2, 4, 10, 20, 50, 100]]
+        classification_data.append(classification_avg_row)
+
+        classification_array = np.array(classification_data)
+        classification_columns = [f'top{k+1}' for k in range(10)] + [f'{k}-way' for k in [2, 4, 10, 20, 50, 100]]
+        pd_classification = pd.DataFrame(data=np.round(classification_array, 4), index=index, columns=classification_columns)
+
+        # Save to separate CSV files with short exp_id
+        current_date = datetime.datetime.now().strftime("%m%d")
+        
+        # Use different prefix based on no_pretrain flag
+        prefix = "retrieval" if args.no_pretrain else "mae_retrieval"
+        prefix_cls = "classification" if args.no_pretrain else "mae_classification"
+        
+        # Use short exp_id in filename
+        retrieval_filename = os.path.join(args.result_path, f"{prefix}_{args.encoder_type}_{args.exp_id}_{current_date}.csv")
+        classification_filename = os.path.join(args.result_path, f"{prefix_cls}_{args.encoder_type}_{args.exp_id}_{current_date}.csv")
+        
+        pd_retrieval.to_csv(retrieval_filename, float_format='%.4f')
+        pd_classification.to_csv(classification_filename, float_format='%.4f')
+        
+        print(f"Retrieval results saved to: {retrieval_filename}")
+        print(f"Classification results saved to: {classification_filename}")
     else:
-        # Cross-subject: train on all but one subject, test on the excluded subject
-        for i in range(num_sub):
-            cal_num += 1
-            starttime = datetime.datetime.now()
-            seed_n = args.seed
-
-            print('seed is ' + str(seed_n))
-            random.seed(seed_n)
-            np.random.seed(seed_n)
-            torch.manual_seed(seed_n)
-            torch.cuda.manual_seed(seed_n)
-            torch.cuda.manual_seed_all(seed_n)
-
-            print('Cross-subject, exclude Subject %d' % (i+1))
-            ie = IE(args, i + 1)
-
-            results, topacc, results_class, topacc_class = ie.train() 
-            print({k: round(v, 4) for k, v in topacc.items()})
-            print({k: round(v, 4) for k, v in results.items()})
-            print({k: round(v, 4) for k, v in topacc_class.items()})
-            print({k: round(v, 4) for k, v in results_class.items()})
-
-            endtime = datetime.datetime.now()
-            print('cross-subject exclude %d duration: '%(i+1) + str(endtime - starttime))
-
-            # --- top-k accuracy ---
-            for k in range(10):
-                val = topacc.get(k, 0.0) 
-                top_k_accs[k].append(val)
-                val_cls = topacc_class.get(k, 0.0)
-                top_k_accs_class[k].append(val_cls)
-
-            # --- k-way accuracy ---
-            for k in [2, 4, 10, 20, 50, 100]:
-                val = results.get(k, 0.0)
-                way_k_accs[k].append(val)
-                val_cls = results_class.get(k, 0.0)
-                way_k_accs_class[k].append(val_cls)
-
-
-    # Create retrieval and classification results matrices (save separately)
-    # Retrieval results
-    retrieval_data = []
-    for sub_idx in range(cal_num):
-        row = []
-        for k in range(10):
-            row.append(top_k_accs[k][sub_idx])
-        for k in [2, 4, 10, 20, 50, 100]:
-            row.append(way_k_accs[k][sub_idx])
-        retrieval_data.append(row)
-
-    retrieval_avg_row = [np.mean(top_k_accs[k]) for k in range(10)] + \
-                        [np.mean(way_k_accs[k]) for k in [2, 4, 10, 20, 50, 100]]
-    retrieval_data.append(retrieval_avg_row)
-
-    retrieval_array = np.array(retrieval_data)
-    index = [f'subject_{i+1}' for i in range(cal_num)] + ['average']
-    retrieval_columns = [f'top{k+1}' for k in range(10)] + [f'{k}-way' for k in [2, 4, 10, 20, 50, 100]]
-
-    pd_retrieval = pd.DataFrame(data=np.round(retrieval_array, 4), index=index, columns=retrieval_columns)
-
-    # Classification results
-    classification_data = []
-    for sub_idx in range(cal_num):
-        row = []
-        for k in range(10):
-            row.append(top_k_accs_class[k][sub_idx])
-        for k in [2, 4, 10, 20, 50, 100]:
-            row.append(way_k_accs_class[k][sub_idx])
-        classification_data.append(row)
-
-    classification_avg_row = [np.mean(top_k_accs_class[k]) for k in range(10)] + \
-                                [np.mean(way_k_accs_class[k]) for k in [2, 4, 10, 20, 50, 100]]
-    classification_data.append(classification_avg_row)
-
-    classification_array = np.array(classification_data)
-    classification_columns = [f'top{k+1}' for k in range(10)] + [f'{k}-way' for k in [2, 4, 10, 20, 50, 100]]
-    pd_classification = pd.DataFrame(data=np.round(classification_array, 4), index=index, columns=classification_columns)
-
-    # Save to separate CSV files
-    current_date = datetime.datetime.now().strftime("%m%d")
-    pretrain_suffix = "_mae_pretrained" if args.enable_ie_mae_autoload else ""
-    
-    # Use different prefix based on no_pretrain flag and insubject mode
-    prefix = "result_retrieval" if args.no_pretrain else "result_mae_retrieval"
-    prefix_cls = "result_classification" if args.no_pretrain else "result_mae_classification"
-    mode_str = "insubject" if args.insubject else "cross"
-    alpha_str = f"_alpha{args.alpha}"
-    # retrieval_filename = os.path.join(args.result_path, f"{prefix}_{args.encoder_type}_{mode_str}_{current_date}{alpha_str}_cn.csv")
-    # classification_filename = os.path.join(args.result_path, f"{prefix_cls}_{args.encoder_type}_{mode_str}_{current_date}{alpha_str}_cn.csv")
-    retrieval_filename = os.path.join(args.result_path, f"{prefix}_{args.encoder_type}_{mode_str}_{current_date}.csv")
-    classification_filename = os.path.join(args.result_path, f"{prefix_cls}_{args.encoder_type}_{mode_str}_{current_date}.csv")
-    
-    pd_retrieval.to_csv(retrieval_filename, float_format='%.4f')
-    pd_classification.to_csv(classification_filename, float_format='%.4f')
-    
-    print(f"Retrieval results saved to: {retrieval_filename}")
-    print(f"Classification results saved to: {classification_filename}")
-
+        print("No results to save - no subjects processed")
 
 if __name__ == "__main__":
     print(time.asctime(time.localtime(time.time())))
     main()
     print(time.asctime(time.localtime(time.time())))
-    
